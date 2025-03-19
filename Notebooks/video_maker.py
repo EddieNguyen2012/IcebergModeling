@@ -11,6 +11,12 @@ import cmocean
 from datetime import datetime, timedelta
 
 
+def iter_number_to_date(iter_number,seconds_per_iter=60):
+
+    total_seconds = iter_number*seconds_per_iter
+    date = datetime(1992,1,15, 12) + timedelta(seconds=total_seconds)
+    return date
+
 def extract_time(filename):
     # Extract the date part of the filename
     checkpoint = filename[-12:-4]  # Extracting the date portion
@@ -82,6 +88,8 @@ class Variable:
         return f'var: {self.variable}, count: {self.file_count}'
 
 
+
+
 class MovieConfiguration:
     variable_metadata = {
         "EtaN": {"vmin": -2.9, "vmax": 2.3, "cmap": "viridis", "unit": "$^{\circ}$C"},
@@ -147,12 +155,7 @@ class MovieConfiguration:
         else:
             raise ValueError("Missing arguments, please provide a new row count AND a new column count")
 
-    def create_plots(self, option: str, start_date: datetime = None, end_date: datetime = None):
-        if not option:
-            raise ValueError(
-                "No plot choice provided, please provide at least one of daily_mean, daily_snapshot, monthly_mean or "
-                "monthly_snapshot")
-
+    def get_time_frames_and_variables(self, option, start_date: datetime = None, end_date: datetime = None):
         variables_tmp = set([Variable(folder) for folder in os.listdir(os.path.join(self.input_folder, option)) if
                              (not folder.startswith("._")) and (
                                  os.listdir(os.path.join(self.input_folder, option, folder)))])
@@ -180,6 +183,15 @@ class MovieConfiguration:
         if not os.path.exists(os.path.join(self.output_folder, 'plots', option)):
             os.makedirs(os.path.join(self.output_folder, 'plots', option))
             print(f"Created folder for {option} plots at {os.path.join(self.output_folder, 'plots', option)}")
+        return variables, time_frames
+
+    def create_plots_from_nc(self, option: str, start_date: datetime = None, end_date: datetime = None):
+        if not option:
+            raise ValueError(
+                "No plot choice provided, please provide at least one of daily_mean, daily_snapshot, monthly_mean or "
+                "monthly_snapshot")
+
+        variables, time_frames = self.get_time_frames_and_variables(option, start_date, end_date)
         for time_frame in time_frames:
             plot_title = option.replace('_', ' ').capitalize()
 
@@ -249,7 +261,33 @@ class MovieConfiguration:
             print(f"Created folder for {option} videos at {os.path.join(self.output_folder, 'video', option)}")
         clip.write_videofile(os.path.join(self.output_folder, 'video', option, f'{option}_video' + '.mp4'), fps=fps)
 
-################################################################## Main Program functions
+    def create_iceberg_plots(self, model_grid_dir, model_bathy_dir, calving_locs=15, calving_schedule_size=15000):
+        folder_path = os.path.join(self.input_folder, 'iceberg')
+        if not os.path.exists(folder_path):
+            raise FileNotFoundError("Iceberg output folder does not exist")
+
+        file_list = [file for file in os.listdir(folder_path) if not file.startswith('._')]
+        file_list = sorted(file_list, key=lambda timestamp: int(timestamp.split('.')[1]))
+
+        model_grid = np.fromfile(model_grid_dir, '>f8').reshape(
+            (16, self.row + 1, self.column + 1))
+        # recreate the grids that will be used in the model
+        XC = model_grid[0, :-1, :-1]
+        YC = model_grid[1, :-1, :-1]
+        bathy = np.fromfile(model_bathy_dir, '>f4').reshape(np.shape(XC))
+
+        for file in file_list:
+            file_path = os.path.join(folder_path, file)
+            ds = np.fromfile(file_path, '>f8').reshape((calving_locs, calving_schedule_size)).T
+            ds = ds[ds[:, 0] != 0, :]  # get rows which has an actual iceberg
+
+            plt.figure(figsize=(10,7))
+            C = plt.pcolormesh(bathy, cmap=cmocean.cm.ice)
+            plt.scatter(ds[:, 2], ds[:, 3], c='gray', s=5)
+            date = iter_number_to_date(int(file.split('.')[1]))
+            plt.suptitle(f'Iceberg movement on {date}')
+            plt.colorbar(C, orientation = 'horizontal')
+# ---------------- Main Program functions -----------------
 
 #
 # def check_input_argument() -> MovieConfiguration:
